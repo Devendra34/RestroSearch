@@ -30,7 +30,7 @@ public class ZomatoApi {
 
         @Headers("user-key: fd3ec04e03098453e4457908a766aae1")
         @GET("api/v2.1/search")
-        Call<Example> queryData();
+        Call<Example> queryData(@Query("q") String query, @Query("start") int startFrom,@Query("entity_id") int entity_id);
 
         @Headers("user-key: fd3ec04e03098453e4457908a766aae1")
         @GET("api/v2.1/search")

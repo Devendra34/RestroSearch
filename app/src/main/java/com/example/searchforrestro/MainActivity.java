@@ -8,17 +8,24 @@ import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.lifecycle.ViewModelProviders;
+
+import android.app.AlertDialog;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.AbsListView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import com.example.searchforrestro.adapters.RestroAdapter;
-import com.example.searchforrestro.models.Restaurant_;
+import com.example.searchforrestro.models.Restaurant;
 import com.example.searchforrestro.view_models.MainActivityViewModel;
 
 import java.util.List;
+
+import dmax.dialog.SpotsDialog;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -28,76 +35,138 @@ public class MainActivity extends AppCompatActivity {
     private MainActivityViewModel viewModel;
     private SearchView searchView;
     private TextView resultsFoundTV;
+    private LinearLayoutManager manager;
+    private AlertDialog spotsBox;
 
     private RestroAdapter restroAdapter;
     private boolean isRecyclerViewInit = false;
+    private boolean isScrolling = false;
+    private String query;
+    private static final String TAG = "debug";
+    private int currentItems, totalItems, scrollOutItems, totalResultsFound;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        toolbar = findViewById(R.id.tools);
-        recyclerView = findViewById(R.id.rv);
-        resultsFoundTV = findViewById(R.id.results_found_tv);
-        viewModel = ViewModelProviders.of(this).get(MainActivityViewModel.class);
+        initViews();
 
         recyclerView.setVisibility(View.GONE);
         setSupportActionBar(toolbar);
 
-//        viewModel.queryRestaurants("",0);
-        viewModel.getResultsFound().observe(this, new Observer<String>() {
-            @Override
-            public void onChanged(String s) {
-                if(s == null || "".equals(s)) {
-                    resultsFoundTV.setVisibility(View.GONE);
-                    return;
-                }
-                resultsFoundTV.setVisibility(View.VISIBLE);
-                resultsFoundTV.setText(s);
+        spotsBox.show();
+        viewModel.queryRestaurants("" ,  false);
+        observeData();
+        stopDialogAfterFiveSeconds();
+        addScrollListener();
+    }
+
+    private void observeData() {
+
+        viewModel.getResultsFound().observe(this, totalResults -> {
+            if (spotsBox.isShowing()) {
+                spotsBox.cancel();
+            }
+            if (totalResults == null) {
+                resultsFoundTV.setVisibility(View.GONE);
+                return;
+            }
+            totalResultsFound = totalResults;
+            String resultsFound = "Results Found: " + totalResults;
+            resultsFoundTV.setVisibility(View.VISIBLE);
+            resultsFoundTV.setText(resultsFound);
+        });
+        viewModel.getResroLiveData().observe(this, restaurants -> {
+            if (spotsBox.isShowing()) {
+                spotsBox.cancel();
+            }
+            if (!isRecyclerViewInit) {
+                initRecyclerView();
+            } else {
+                restroAdapter.setRestaurants(restaurants);
             }
         });
 
-        viewModel.getResroLiveData().observe(this, new Observer<List<Restaurant_>>() {
-            @Override
-            public void onChanged(List<Restaurant_> restaurant_s) {
-                if (!isRecyclerViewInit) {
-                    initRecyclerView();
-                } else {
-                    restroAdapter.notifyDataSetChanged();
-                }
-            }
-        });
+    }
+
+    private void initViews() {
+        toolbar = findViewById(R.id.tools);
+        recyclerView = findViewById(R.id.rv);
+        resultsFoundTV = findViewById(R.id.results_found_tv);
+        viewModel = ViewModelProviders.of(this).get(MainActivityViewModel.class);
+        manager = new LinearLayoutManager(this);
+        spotsBox = new SpotsDialog(this, "Loading");
     }
 
     private void initRecyclerView() {
-        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setLayoutManager(manager);
         recyclerView.setVisibility(View.VISIBLE);
-        restroAdapter = new RestroAdapter(this,viewModel.getResroLiveData().getValue());
+        restroAdapter = new RestroAdapter(this, viewModel.getResroLiveData().getValue());
         recyclerView.setAdapter(restroAdapter);
         isRecyclerViewInit = true;
     }
+
+    private void addScrollListener() {
+        recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                super.onScrollStateChanged(recyclerView, newState);
+
+                if (newState == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
+                    isScrolling = true;
+                }
+            }
+
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                super.onScrolled(recyclerView, dx, dy);
+                currentItems = manager.getChildCount();
+                totalItems = manager.getItemCount();
+                scrollOutItems = manager.findFirstVisibleItemPosition();
+
+                if (isScrolling
+                        && currentItems + scrollOutItems == totalItems
+                        && totalResultsFound > totalItems) {
+                    Log.d(TAG, "onScrolled: Loading more items");
+                    viewModel.queryRestaurants(query,  true);
+                }
+            }
+        });
+    }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.search_menu,menu);
+        getMenuInflater().inflate(R.menu.search_menu, menu);
 
         MenuItem searchItem = menu.findItem(R.id.action_search);
         searchView = (SearchView) searchItem.getActionView();
         searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
             @Override
-            public boolean onQueryTextSubmit(String query) {
+            public boolean onQueryTextSubmit(String newQuery) {
+                spotsBox.show();
+                query = newQuery;
+                viewModel.queryRestaurants(query,  false);
                 return true;
             }
 
             @Override
             public boolean onQueryTextChange(String newText) {
-                if(newText == null) {
-                    newText = "";
-                }
-                viewModel.queryRestaurants(newText,0);
-                return true;
+                return false;
             }
         });
         return true;
+    }
+    private void stopDialogAfterFiveSeconds(){
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                spotsBox.cancel();
+            }
+        }).start();
     }
 }
